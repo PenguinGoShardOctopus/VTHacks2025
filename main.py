@@ -1,18 +1,8 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import sys
+from databricks_flow import get_schema_for_user_query
 
-# --- 1. Import Core Logic ---
-# Ensure your complex setup (databricks_flow.py) is ready and accessible.
-try:
-    from databricks_flow import get_schema_for_user_query
-except ImportError:
-    print("FATAL: Cannot import 'databricks_flow.py'. Make sure the file exists.")
-    sys.exit(1)
-except Exception as e:
-    # Handles immediate environment loading errors from the imported file
-    print(f"FATAL: Error during dependency setup: {e}")
-    sys.exit(1)
 
 
 app = FastAPI()
