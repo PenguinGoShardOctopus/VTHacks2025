@@ -1,13 +1,9 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-import sys
 from databricks_flow import get_schema_for_user_query
-
-
 
 app = FastAPI()
 
-# --- 2. Input Model ---
 # This defines the expected JSON body structure for the POST request.
 class QueryInput(BaseModel):
     query: str
