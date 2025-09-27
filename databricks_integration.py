@@ -1,32 +1,12 @@
 import os
-import requests
-import json
-from base64 import b64encode
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service import files as d_files
-from databricks.sdk.service import jobs as d_jobs
-import logging
-
-logger = logging.getLogger(__name__)
-
 # --- Databricks Configuration ---
-DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
-DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
-DATABRICKS_CATALOG = os.getenv("DATABRICKS_CATALOG", "main")
-DATABRICKS_SCHEMA = os.getenv("DATABRICKS_SCHEMA", "default")
-DATABRICKS_VOLUME = os.getenv("DATABRICKS_VOLUME", "uploads")
-DATABRICKS_CLUSTER_ID = os.getenv("DATABRICKS_CLUSTER_ID") # Required for running commands directly
-DATABRICKS_SQL_WAREHOUSE_ID = os.getenv("DATABRICKS_SQL_WAREHOUSE_ID") # For SQL statement execution
+DATABRICKS_HOST = os.getenv("DB_SERVER_HOSTNAME")
+DATABRICKS_TOKEN = os.getenv("DB_ACCESS_TOKEN")
+DATABRICKS_CATALOG = os.getenv("DB_CATALOG", "workspace")
+DATABRICKS_SCHEMA = os.getenv("DB_SCHEMA", "dev")
+DATABRICKS_VOLUME = os.getenv("DB_VOLUME", "files")
 
-if not all([DATABRICKS_HOST, DATABRICKS_TOKEN]):
-    raise ValueError(
-        "DATABRICRICKS_HOST and DATABRICKS_TOKEN "
-        "environment variables must be set."
-    )
-
-# Initialize Databricks SDK client (optional, but good for robust interaction)
-# This will pick up credentials from environment variables (DATABRICKS_HOST, DATABRICKS_TOKEN)
-# or .databrickscfg by default.
 w = WorkspaceClient(host=DATABRICKS_HOST, token=DATABRICKS_TOKEN)
 
 
@@ -41,25 +21,13 @@ def upload_csv_to_databricks(
         f"/Volumes/{DATABRICKS_CATALOG}/"
         f"{DATABRICKS_SCHEMA}/{DATABRICKS_VOLUME}/{databricks_path}"
     )
-    logger.info(f"Uploading file to Databricks Volume: {full_volume_path}")
 
-    # For larger files, you'd use the streaming upload API
-    # For simplicity, using `put` for now (limited to 1MB per request when not streaming content parameter)
-    # The Databricks SDK `files` service can handle larger files more gracefully
-    try:
-        # Ensure the parent directory exists if using standard filesystem-like operations
-        # For Unity Catalog Volumes, the path structure takes care of this
-        # The WorkspaceClient.files.upload method simplifies this a lot
-        w.files.upload(
-            full_volume_path,
-            contents=file_content,
-            overwrite=True,  # Overwrite if file exists
-        )
-        logger.info(f"File uploaded successfully to {full_volume_path}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to upload file to Databricks: {e}")
-        return False
+    w.files.upload(
+        full_volume_path,
+        contents=file_content,
+        overwrite=True,
+    )
+    return True
     
 def trigger_csv_to_table(filename):
     try:   
