@@ -8,20 +8,14 @@ import sys
 load_dotenv()
 
 # --- Connection and API Setup ---
-try:
-    DB_HOST = os.environ['DB_SERVER_HOSTNAME']
-    DB_PATH = os.environ['DB_HTTP_PATH']
-    DB_TOKEN = os.environ['DB_ACCESS_TOKEN']
-    DB_CATALOG = os.environ['DB_CATALOG']
-    DB_SCHEMA = os.environ['DB_SCHEMA']
+DB_HOST = os.environ['DB_SERVER_HOSTNAME']
+DB_PATH = os.environ['DB_HTTP_PATH']
+DB_TOKEN = os.environ['DB_ACCESS_TOKEN']
+DB_CATALOG = os.environ['DB_CATALOG']
+DB_SCHEMA = os.environ['DB_SCHEMA']
 
-    # Gemini API Client
-    client = genai.Client()
+client = genai.Client()
     
-except KeyError as e:
-    # We raise an exception here that the main app will catch
-    raise EnvironmentError(f"Missing required configuration: {e}")
-
 
 # --- Helper Functions (Unchanged) ---
 def get_table_schema(table):
