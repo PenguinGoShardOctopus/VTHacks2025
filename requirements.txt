@@ -2,3 +2,5 @@ fastapi
 uvicorn
 google-genai
 dotenv
+databricks #maybe not neccessary who knows atp 
+databricks.sql
