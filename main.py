@@ -1,10 +1,9 @@
 from datetime import datetime
-
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from databricks_integration import upload_csv_to_databricks, trigger_csv_to_table
 from pydantic import BaseModel
-from databricks_flow import get_schema_for_user_query
+from databricks_flow import generate_visualization_from_query
 
 app = FastAPI()
 
@@ -13,17 +12,26 @@ class QueryInput(BaseModel):
     query: str
 
 
-@app.post("/get_schema")
-def get_schema(input_data: QueryInput):
+@app.post("/generate_visualization")
+def generate_viz(input_data: QueryInput):
     """
-    Accepts a user query, uses the LLM to select the relevant table, 
-    and returns the schema (column names and types).
+    Accepts a user query and returns a full JSON payload with
+    a recommended visualization and the corresponding data.
     """
-    # The complexity is handled entirely inside this function call.
-    schema = get_schema_for_user_query(input_data.query)
-    
-    # FastAPI automatically converts the Python list of dictionaries (schema) into JSON.
-    return schema
+    try:
+        # The entire complex workflow is handled by this single function call.
+        visualization_data = generate_visualization_from_query(input_data.query)
+        
+        # FastAPI automatically converts the final Python dictionary into a JSON response.
+        return visualization_data
+    except (ValueError, LookupError) as e:
+        # Handle known errors from our flow (e.g., no tables found, LLM returns invalid format)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Catch any other unexpected errors (e.g., DB connection, LLM API failure)
+        raise HTTPException(status_code=500, detail=f"An internal error occurred: {e}")
+
+
 
 @app.post("/upload/")
 async def upload(file: UploadFile = File(...)):
