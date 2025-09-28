@@ -70,6 +70,8 @@ def choose_visualization(user_query: str, schema: list) -> dict:
         f"Available chart types: {', '.join(CHART_TYPES)}\n"
         "Your response MUST be a single, valid JSON object with two keys: 'type' and 'justification'. "
         "Do not add any other text, explanation, or markdown formatting outside of the JSON object."
+        "Do not refer to the user or their specific query. Frame it as a general best practice."
+
     )
     
     final_prompt = (
