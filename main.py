@@ -25,7 +25,7 @@ def get_schema(input_data: QueryInput):
     # FastAPI automatically converts the Python list of dictionaries (schema) into JSON.
     return schema
 
-@app.post("/upload/")
+@app.post("/upload")
 async def upload(file: UploadFile = File(...)):
     """
     Receives a CSV file, uploads it to Databricks, and triggers table creation.
@@ -34,7 +34,6 @@ async def upload(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=400, detail="Only CSV files are allowed."
         )
-
     try:
         file_content = await file.read()
 
