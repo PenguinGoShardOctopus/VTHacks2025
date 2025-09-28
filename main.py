@@ -3,27 +3,23 @@ from datetime import datetime
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from databricks_integration import upload_csv_to_databricks, trigger_csv_to_table
-from pydantic import BaseModel
-from databricks_flow import get_schema_for_user_query
+from google.genai import Client
 
 app = FastAPI()
-
-# This defines the expected JSON body structure for the POST request.
-class QueryInput(BaseModel):
-    query: str
+client = Client()
 
 
-@app.post("/get_schema")
-def get_schema(input_data: QueryInput):
+@app.post("/trigger")
+def trigger(query: str):
     """
     Accepts a user query, uses the LLM to select the relevant table, 
     and returns the schema (column names and types).
     """
-    # The complexity is handled entirely inside this function call.
-    schema = get_schema_for_user_query(input_data.query)
-    
-    # FastAPI automatically converts the Python list of dictionaries (schema) into JSON.
-    return schema
+    chat = client.chats.create(
+        model='gemini-2.5-flash'
+    )
+    del chat
+    return
 
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):

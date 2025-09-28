@@ -4,14 +4,11 @@ from typing import *
 
 from databricks.sdk.service.sql import ExecuteStatementRequestOnWaitTimeout
 from dotenv import load_dotenv
-from fastmcp import FastMCP
 from databricks.sdk import WorkspaceClient
 
 load_dotenv()
-mcp = FastMCP(name="Decision Tools")
 client = WorkspaceClient(host=os.getenv("DB_SERVER_HOSTNAME"), token=os.getenv("DB_ACCESS_TOKEN"))
-@mcp.tool()
-async def list_tables() -> Dict[str, str]:
+def list_tables() -> Dict[str, str]:
     """
     List tables available in the datalake.
     This must be called to fetch relevant table to match user query
@@ -21,10 +18,10 @@ async def list_tables() -> Dict[str, str]:
     table_map = {}
     for table in result:
         table_map[table.name] = (table.comment if table.comment is not None else "")
+    print("LIST CALLED")
     return table_map
 
-@mcp.tool()
-async def get_schema(table) -> Dict[str, str]:
+def get_schema(table: Annotated[str, "table name (without workspace or schema names)"]) -> Dict[str, str]:
     """
     Fetch the full table schema for the specified table.
     This must be called to get a better understanding of the
@@ -34,14 +31,15 @@ async def get_schema(table) -> Dict[str, str]:
     :return: Dict of table headers and corresponding types
     """
     result = client.tables.get(full_name=f"{os.getenv('DB_CATALOG')}.{os.getenv('DB_SCHEMA')}.{table}")
-    column_map = {}
+    column_map: Dict[str, str] = {}
     for column in result.columns:
-        column_map[column.name] = column.type_name.value
+        column_map[column.name] = str(column.type_name.value)
+    print("VALUESSS")
+    print(column_map)
     return column_map
 
 
-@mcp.tool()
-async def parse_sql(commands) -> List[Any]:
+def parse_sql(commands: Annotated[str, "SQL Command"]) -> List[Any]:
     """
     This must be called to fetch relevant data from the
     selected table before sending it to visualization algorithms.
@@ -61,7 +59,7 @@ async def parse_sql(commands) -> List[Any]:
     """
     result = client.statement_execution.execute_statement(
         statement=commands,
-        warehouse_id=os.getenv("DB_WAREHOUS_ID"),
+        warehouse_id=os.getenv("DB_WAREHOUSE_ID"),
         catalog=os.getenv("DB_CATALOG"),
         schema=os.getenv("DB_SCHEMA"),
         wait_timeout='20s',
@@ -71,6 +69,3 @@ async def parse_sql(commands) -> List[Any]:
         return result.result.data_array
     else:
         raise HTTPException("Statement Timeout: try a shorter query")
-
-if __name__ == "__main__":
-    mcp.run(transport="http", port=8000)
