@@ -55,7 +55,7 @@ def get_all_tables_metadata(connection):
             for r in cursor.fetchall()
         ]
 
-# --- NEW: LLM-Powered Functions ---
+# --- LLM-Powered Functions ---
 
 def choose_visualization(user_query: str, schema: list) -> dict:
     """
@@ -95,6 +95,44 @@ def choose_visualization(user_query: str, schema: list) -> dict:
         print(f"Error decoding JSON from LLM for visualization choice: {e}")
         raise ValueError("LLM failed to return a valid JSON for visualization type.")
 
+
+def generate_data_insights(user_query: str, viz_info: dict, data_sample: list) -> str:
+    """
+    Uses an LLM to generate a brief insight about the data based on the results.
+    """
+    if not data_sample:
+        return "No data was returned from the query, so no insights could be generated."
+
+    # Convert the data sample to a more readable string format for the prompt
+    data_str = json.dumps(data_sample, indent=2)
+
+    llm_instruction = (
+        "You are a helpful data analyst. Your task is to provide a brief, human-readable insight based on a user's query, the chosen visualization, and a sample of the resulting data. "
+        "The insight should be a short observation about patterns, trends, or notable points in the data. "
+        "Focus on what the data reveals in the context of the user's question. "
+        "Your response should be a single, concise string of one or two sentences. Do not add any other text or explanation."
+    )
+
+    final_prompt = (
+        f"{llm_instruction}\n\n"
+        f"--- CONTEXT ---\n"
+        f"Original User Query: \"{user_query}\"\n"
+        f"Chosen Visualization: {viz_info['type']}\n"
+        f"Justification for Chart: {viz_info['justification']}\n"
+        f"--- DATA SAMPLE (first {len(data_sample)} rows) ---\n"
+        f"{data_str}\n"
+        f"--- END CONTEXT ---\n\n"
+        f"Insight:"
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=final_prompt
+    )
+
+    return response.text.strip()
+
+
 def generate_and_execute_sql(user_query: str, schema: list, viz_info: dict, table_name: str, connection) -> list:
     """
     Uses an LLM to generate a Databricks SQL query and then executes it.
@@ -131,13 +169,12 @@ def generate_and_execute_sql(user_query: str, schema: list, viz_info: dict, tabl
         contents=final_prompt
     )
     
-    generated_sql = response.text.strip()
+    generated_sql = response.text.strip().replace("```sql", "").replace("```", "")
     
     print(f"Executing Generated SQL:\n{generated_sql}") # For debugging
     
     with connection.cursor() as cursor:
         cursor.execute(generated_sql)
-        # fetchall_arrow().to_pylist() is an efficient way to get a list of dicts
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
         results = [dict(zip(columns, row)) for row in rows]
@@ -181,7 +218,7 @@ def _select_table_and_get_schema(user_query: str, connection) -> tuple[list, str
 
 def generate_visualization_from_query(user_query: str) -> dict:
     """
-    Executes the full Text-to-Visualization chain.
+    Executes the full Text-to-Visualization chain, now including data insights.
     """
     # Use a single connection for the entire process for efficiency
     with databricks.sql.connect(server_hostname=DB_HOST, http_path=DB_PATH, access_token=DB_TOKEN) as connection:
@@ -195,7 +232,12 @@ def generate_visualization_from_query(user_query: str) -> dict:
         # 3. Generate and execute the SQL to get the data
         data = generate_and_execute_sql(user_query, schema, viz_info, table_name, connection)
 
-    # 4. Assemble the final response object
+        # 4. NEW: Generate insights based on the returned data
+        # Use a sample of the data (e.g., first 10 rows) to keep the prompt concise
+        insights_text = generate_data_insights(user_query, viz_info, data[:10])
+        viz_info['insights'] = insights_text
+
+    # 5. Assemble the final response object
     final_output = {
         "visualization": viz_info,
         "data": data

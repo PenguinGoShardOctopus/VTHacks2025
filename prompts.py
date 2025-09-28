@@ -1,42 +1,204 @@
 import os
-from databricks.sdk import WorkspaceClient
-# --- Databricks Configuration ---
-DATABRICKS_HOST = os.getenv("DB_SERVER_HOSTNAME")
-DATABRICKS_TOKEN = os.getenv("DB_ACCESS_TOKEN")
-DATABRICKS_CATALOG = os.getenv("DB_CATALOG", "workspace")
-DATABRICKS_SCHEMA = os.getenv("DB_SCHEMA", "dev")
-DATABRICKS_VOLUME = os.getenv("DB_VOLUME", "files")
+from dotenv import load_dotenv
+import databricks.sql
+from google import genai
+import json
 
-w = WorkspaceClient(host=DATABRICKS_HOST, token=DATABRICKS_TOKEN)
+# Load all environment variables
+load_dotenv()
 
+# --- Connection and API Setup ---
+DB_HOST = os.environ.get('DB_SERVER_HOSTNAME')
+DB_PATH = os.environ.get('DB_HTTP_PATH')
+DB_TOKEN = os.environ.get('DB_ACCESS_TOKEN')
+DB_CATALOG = os.environ.get('DB_CATALOG')
+DB_SCHEMA = os.environ.get('DB_SCHEMA')
 
-def upload_csv_to_databricks(
-    file_content: bytes, databricks_path: str
-) -> bool:
+client = genai.Client()
+
+# --- Constants ---
+CHART_TYPES = [
+    "bar-funnel", "boxplot", "error-bars",
+    "financial", "funnel", "geo",
+    "graph", "matrix", "pcp",
+    "sankey", "smith", "stacked100",
+    "treemap", "venn", "word-cloud"
+]
+
+# --- Helper Functions (Mostly Unchanged) ---
+def get_table_schema(table_name: str, connection):
+    """Retrieves schema for a specific table using an existing connection."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT column_name, data_type
+            FROM {DB_CATALOG}.information_schema.columns
+            WHERE table_schema = '{DB_SCHEMA}' AND table_name = '{table_name}'
+            ORDER BY ordinal_position
+            """
+        )
+        return [{"column_name": r[0], "data_type": r[1]} for r in cursor.fetchall()]
+
+def get_all_tables_metadata(connection):
+    """Retrieves metadata for all tables using an existing connection."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT table_name, comment
+            FROM {DB_CATALOG}.information_schema.tables
+            WHERE table_schema = '{DB_SCHEMA}'
+            ORDER BY table_name
+            """
+        )
+        return [
+            {"table_name": r[0], "description": r[1] if r[1] else "No description available."}
+            for r in cursor.fetchall()
+        ]
+
+# --- NEW: LLM-Powered Functions ---
+
+def choose_visualization(user_query: str, schema: list) -> dict:
     """
-    Uploads the CSV file content to a Databricks Unity Catalog Volume.
-    The databricks_path should be in the format /Volumes/{catalog}/{schema}/{volume}/your_file.csv
-    """
-    full_volume_path = (
-        f"/Volumes/{DATABRICKS_CATALOG}/"
-        f"{DATABRICKS_SCHEMA}/{DATABRICKS_VOLUME}/{databricks_path}"
-    )
-
-    w.files.upload(
-        full_volume_path,
-        contents=file_content,
-        overwrite=True,
-    )
-    return True
+    Uses an LLM to choose the best visualization type based on the user query and table schema.
     
-def trigger_csv_to_table(filename):
-    try:   
-        # Trigger the job run
-        print(f"Triggering job ID: {491321462338714} with parameters: file_name = {filename}")
-        new_run = w.jobs.run_now(job_id=491321462338714, job_parameters={"file_name": filename})
+    Returns:
+        A dictionary like {"type": "scatter", "justification": "..."}
+    """
+    schema_str = "\n".join([f"- {col['column_name']} ({col['data_type']})" for col in schema])
+    
+    llm_instruction = (
+        "You are an expert data analyst. Your task is to recommend the best chart type to answer a user's question "
+        "based on the available data columns. You must choose exactly one type from the provided list.\n"
+        f"Available chart types: {', '.join(CHART_TYPES)}\n"
+        "Your response MUST be a single, valid JSON object with two keys: 'type' and 'justification'. "
+        "Do not add any other text, explanation, or markdown formatting outside of the JSON object."
+        "Do not refer to the user or their specific query. Frame it as a general best practice."
 
-        print(f"Job triggered successfully. Run ID: {new_run.run_id}")
-        return new_run.run_id
+    )
+    
+    final_prompt = (
+        f"{llm_instruction}\n\n"
+        f"User Query: \"{user_query}\"\n\n"
+        f"Available Columns:\n{schema_str}"
+    )
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=final_prompt
+    )
+    
+    try:
+        # Clean up potential markdown formatting from the LLM response
+        cleaned_response = response.text.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(cleaned_response)
+    except (json.JSONDecodeError, AttributeError) as e:
+        print(f"Error decoding JSON from LLM for visualization choice: {e}")
+        raise ValueError("LLM failed to return a valid JSON for visualization type.")
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
+def generate_and_execute_sql(user_query: str, schema: list, viz_info: dict, table_name: str, connection) -> list:
+    """
+    Uses an LLM to generate a Databricks SQL query and then executes it.
+    The LLM is instructed to create new columns on-the-fly using CTEs if needed.
+    
+    Returns:
+        A list of dictionaries representing the query results.
+    """
+    schema_str = "\n".join([f"- {col['column_name']} ({col['data_type']})" for col in schema])
+    
+    llm_instruction = (
+        "You are a Databricks SQL expert. Your goal is to write a SINGLE SQL query to fetch data that can be used to create a specified visualization. "
+        "The query should be tailored to the user's request.\n"
+        "IMPORTANT RULES:\n"
+        "1. If a necessary column doesn't exist but can be derived from existing columns (e.g., extracting a year from a date, creating a price category), "
+        "you MUST generate it on-the-fly using a Common Table Expression (CTE) with a `WITH` clause.\n"
+        "2. DO NOT use `CREATE TABLE` or any other DDL statements. The query must only read data.\n"
+        "3. Your response must be ONLY the raw SQL query. Do not include any explanations, comments, or markdown formatting like ```sql."
+    )
+    
+    final_prompt = (
+        f"{llm_instruction}\n\n"
+        f"--- CONTEXT ---\n"
+        f"User Query: \"{user_query}\"\n"
+        f"Table to Query: `{DB_CATALOG}`.`{DB_SCHEMA}`.`{table_name}`\n"
+        f"Chosen Visualization: {viz_info['type']} (Justification: {viz_info['justification']})\n"
+        f"Available Columns:\n{schema_str}\n"
+        f"--- END CONTEXT ---\n\n"
+        f"SQL Query:"
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=final_prompt
+    )
+    
+    generated_sql = response.text.strip()
+    
+    print(f"Executing Generated SQL:\n{generated_sql}") # For debugging
+    
+    with connection.cursor() as cursor:
+        cursor.execute(generated_sql)
+        # fetchall_arrow().to_pylist() is an efficient way to get a list of dicts
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        results = [dict(zip(columns, row)) for row in rows]
+    
+    return results
+
+# --- Core Orchestration Logic ---
+
+def _select_table_and_get_schema(user_query: str, connection) -> tuple[list, str]:
+    """
+    First step: Gathers metadata, calls LLM to select a table, and gets its schema.
+    Returns a tuple of (schema, selected_table_name).
+    """
+    table_metadata = get_all_tables_metadata(connection)
+    if not table_metadata:
+        raise ValueError(f"No tables found in {DB_CATALOG}.{DB_SCHEMA}.")
+
+    table_context_list = [
+        f"Table Name: {meta['table_name']}\nDescription: {meta['description']}"
+        for meta in table_metadata
+    ]
+    table_info = "\n---\n".join(table_context_list)
+    
+    llm_instruction = (
+        "The user will inquire and ask to visualize some type of data. "
+        "You will be given a list of table names along with their description. "
+        "You are supposed to pick the most relevant table, and strictly return only the name. "
+        "DO NOT return anything but the name of the most relevant table."
+    )
+    final_prompt = f"{llm_instruction}\n\nuser query: {user_query}\n\ntable(s):\n{table_info}"
+    
+    response = client.models.generate_content(model="gemini-2.5-flash", contents=final_prompt)
+    selected_table = response.text.strip()
+    
+    schema_data = get_table_schema(selected_table, connection)
+    if not schema_data:
+        raise LookupError(f"Table '{selected_table}' was selected by LLM but not found.")
+
+    return schema_data, selected_table
+
+
+def generate_visualization_from_query(user_query: str) -> dict:
+    """
+    Executes the full Text-to-Visualization chain.
+    """
+    # Use a single connection for the entire process for efficiency
+    with databricks.sql.connect(server_hostname=DB_HOST, http_path=DB_PATH, access_token=DB_TOKEN) as connection:
+        
+        # 1. Select the relevant table and get its schema
+        schema, table_name = _select_table_and_get_schema(user_query, connection)
+        
+        # 2. Choose the best visualization type
+        viz_info = choose_visualization(user_query, schema)
+        
+        # 3. Generate and execute the SQL to get the data
+        data = generate_and_execute_sql(user_query, schema, viz_info, table_name, connection)
+
+    # 4. Assemble the final response object
+    final_output = {
+        "visualization": viz_info,
+        "data": data
+    }
+    
+    return final_output

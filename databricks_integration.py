@@ -32,8 +32,8 @@ def upload_csv_to_databricks(
 def trigger_csv_to_table(filename):
     try:   
         # Trigger the job run
-        print(f"Triggering job ID: {491321462338714} with parameters: file_name = {filename}")
-        new_run = w.jobs.run_now(job_id=491321462338714, job_parameters={"file_name": filename})
+        print(f"Triggering job ID: {148324980352233} with parameters: file_name = {filename}")
+        new_run = w.jobs.run_now(job_id=148324980352233, job_parameters={"file_name": filename})
 
         print(f"Job triggered successfully. Run ID: {new_run.run_id}")
         return new_run.run_id
