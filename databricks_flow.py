@@ -18,11 +18,8 @@ client = genai.Client()
 
 # --- Constants ---
 CHART_TYPES = [
-    "bar-funnel", "boxplot", "error-bars",
-    "financial", "funnel", "geo",
-    "graph", "matrix", "pcp",
-    "sankey", "smith", "stacked100",
-    "treemap", "venn", "word-cloud"
+    "line", "bar", "pie",
+    "radar", "scatter"
 ]
 
 # --- Helper Functions (Mostly Unchanged) ---
